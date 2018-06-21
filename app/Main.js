@@ -24,6 +24,7 @@ define([
   "dojo/_base/Color",
   "dojo/colors",
   "dojo/date/locale",
+  "dojo/number",
   "dojo/on",
   "dojo/query",
   "dojo/dom",
@@ -34,6 +35,7 @@ define([
   "esri/core/watchUtils",
   "esri/core/promiseUtils",
   "esri/portal/Portal",
+  "esri/views/MapView",
   "esri/layers/Layer",
   "esri/layers/FeatureLayer",
   "esri/tasks/support/StatisticDefinition",
@@ -49,9 +51,29 @@ define([
   "esri/widgets/BasemapGallery",
   "esri/widgets/Expand"
 ], function (calcite, declare, ApplicationBase, i18n, itemUtils, domHelper,
-             Color, colors, locale, on, query, dom, domClass, domConstruct,
-             IdentityManager, Evented, watchUtils, promiseUtils, Portal, Layer, FeatureLayer, StatisticDefinition,
+             Color, colors, locale, number, on, query, dom, domClass, domConstruct,
+             IdentityManager, Evented, watchUtils, promiseUtils, Portal, MapView, Layer, FeatureLayer, StatisticDefinition,
              Extent, Feature, Home, Search, LayerList, Legend, Print, ScaleBar, Compass, BasemapGallery, Expand) {
+
+
+  // CONVERT DATE TO VALID AGS DATE/TIME STRING //
+  Date.prototype.toAGSDateTimeString = function (useLocal) {
+    if(!useLocal) {
+      return this.getUTCFullYear() +
+          '-' + String(this.getUTCMonth() + 1).padStart(2, "0") +
+          '-' + String(this.getUTCDate()).padStart(2, "0") +
+          ' ' + String(this.getUTCHours()).padStart(2, "0") +
+          ':' + String(this.getUTCMinutes()).padStart(2, "0") +
+          ':' + String(this.getUTCSeconds()).padStart(2, "0");
+    } else {
+      return this.getFullYear() +
+          '-' + String(this.getMonth() + 1).padStart(2, "0") +
+          '-' + String(this.getDate()).padStart(2, "0") +
+          ' ' + String(this.getHours()).padStart(2, "0") +
+          ':' + String(this.getMinutes()).padStart(2, "0") +
+          ':' + String(this.getSeconds()).padStart(2, "0");
+    }
+  };
 
   return declare([Evented], {
 
@@ -104,7 +126,7 @@ define([
       domHelper.setPageTitle(config.title);
 
       const viewProperties = itemUtils.getConfigViewProperties(config);
-      viewProperties.container = "view-container";
+      viewProperties.container = "scene-container";
 
       const portalItem = this.base.results.applicationItem.value;
       const appProxies = (portalItem && portalItem.appProxies) ? portalItem.appProxies : null;
@@ -115,7 +137,9 @@ define([
           itemUtils.findQuery(find, view).then(() => {
             itemUtils.goToMarker(marker, view).then(() => {
               domClass.remove(document.body, this.CSS.loading);
-              this.viewReady(config, firstItem, view);
+              view.when(() => {
+                this.viewReady(config, firstItem, view);
+              });
             });
           });
         });
@@ -131,10 +155,11 @@ define([
     viewReady: function (config, item, view) {
 
       // TITLE //
-      dom.byId("app-title-node").innerHTML = config.title;
-
-      // MAP DETAILS //
-      this.displayMapDetails(item);
+      const title_node = domConstruct.create("div", {
+        className: "panel panel-dark-blue font-size-3",
+        innerHTML: config.title
+      });
+      view.ui.add(title_node, { position: "top-left", index: 0 });
 
       // LOADING //
       const updating_node = domConstruct.create("div", { className: "view-loading-node loader" });
@@ -145,15 +170,6 @@ define([
         domClass.toggle(updating_node, "is-active", updating);
       });
 
-      // PANEL TOGGLE //
-      if(query(".pane-toggle-target").length > 0) {
-        const panelToggleBtn = domConstruct.create("div", { className: "panel-toggle icon-ui-left-triangle-arrow icon-ui-flush font-size-1", title: "Toggle Left Panel" }, view.root);
-        on(panelToggleBtn, "click", () => {
-          domClass.toggle(panelToggleBtn, "icon-ui-left-triangle-arrow icon-ui-right-triangle-arrow");
-          query(".pane-toggle-target").toggleClass("hide");
-          query(".pane-toggle-source").toggleClass("column-18 column-24");
-        });
-      }
 
       // USER SIGN IN //
       this.initializeUserSignIn(view).always(() => {
@@ -168,11 +184,7 @@ define([
 
         // SEARCH //
         const search = new Search({ view: view, searchTerm: this.base.config.search || "" });
-        view.ui.add(search, { position: "top-left", index: 0 });
-
-        // HOME //
-        // const homeWidget = new Home({ view: view });
-        // view.ui.add(homeWidget, { position: "top-left", index: 1 });
+        view.ui.add(search, { position: "top-left", index: 1 });
 
         // BASEMAPS //
         const basemapGalleryExpand = new Expand({
@@ -182,33 +194,6 @@ define([
           expandTooltip: "Basemap"
         });
         view.ui.add(basemapGalleryExpand, { position: "top-left", index: 4 });
-
-        // MAP VIEW ONLY //
-        if(view.type === "2d") {
-          // SNAP TO ZOOM //
-          view.constraints.snapToZoom = false;
-
-          // COMPASS //
-          const compass = new Compass({ view: view });
-          view.ui.add(compass, { position: "top-left", index: 5 });
-
-          // PRINT //
-          const print = new Print({
-            view: view,
-            printServiceUrl: (config.helperServices.printTask.url || this.base.portal.helperServices.printTask.url),
-            templateOptions: { title: config.title, author: this.base.portal.user ? this.base.portal.user.fullName : "" }
-          }, "print-node");
-          this.updatePrintOptions = (title, author, copyright) => {
-            print.templateOptions.title = title;
-            print.templateOptions.author = author;
-            print.templateOptions.copyright = copyright;
-          };
-          this.on("portal-user-change", () => {
-            this.updatePrintOptions(config.title, this.base.portal.user ? this.base.portal.user.fullName : "");
-          });
-        } else {
-          domClass.add("print-action-node", "hide");
-        }
 
         // PLACES //
         this.initializePlaces(view);
@@ -301,31 +286,11 @@ define([
         });
         view.ui.add(layerList, { position: "top-right", index: 0 });
 
-
         this.initializeUndergroundDisplay(view);
 
         this.initializeHawaiiEarthquakeAnalysis(view);
 
       });
-
-    },
-
-    /**
-     * DISPLAY MAP DETAILS
-     *
-     * @param portalItem
-     */
-    displayMapDetails: function (portalItem) {
-
-      const itemLastModifiedDate = (new Date(portalItem.modified)).toLocaleString();
-
-      dom.byId("current-map-card-thumb").src = portalItem.thumbnailUrl;
-      dom.byId("current-map-card-thumb").alt = portalItem.title;
-      dom.byId("current-map-card-caption").innerHTML = `A map by ${portalItem.owner}`;
-      dom.byId("current-map-card-caption").title = "Last modified on " + itemLastModifiedDate;
-      dom.byId("current-map-card-title").innerHTML = portalItem.title;
-      dom.byId("current-map-card-title").href = `https://www.arcgis.com/home/item.html?id=${portalItem.id}`;
-      dom.byId("current-map-card-description").innerHTML = portalItem.description;
 
     },
 
@@ -341,55 +306,13 @@ define([
       IdentityManager.on("credential-create", checkSignInStatus);
       IdentityManager.on("credential-destroy", checkSignInStatus);
 
-      // SIGN IN NODE //
-      const signInNode = dom.byId("sign-in-node");
-      const userNode = dom.byId("user-node");
-
-      // UPDATE UI //
-      const updateSignInUI = () => {
-        if(this.base.portal.user) {
-          dom.byId("user-firstname-node").innerHTML = this.base.portal.user.fullName.split(" ")[0];
-          dom.byId("user-fullname-node").innerHTML = this.base.portal.user.fullName;
-          dom.byId("username-node").innerHTML = this.base.portal.user.username;
-          dom.byId("user-thumb-node").src = this.base.portal.user.thumbnailUrl;
-          domClass.add(signInNode, "hide");
-          domClass.remove(userNode, "hide");
-        } else {
-          domClass.remove(signInNode, "hide");
-          domClass.add(userNode, "hide");
-        }
-        return promiseUtils.resolve();
-      };
-
       // SIGN IN //
       const userSignIn = () => {
         this.base.portal = new Portal({ url: this.base.config.portalUrl, authMode: "immediate" });
         return this.base.portal.load().then(() => {
-          this.emit("portal-user-change", {});
-          return updateSignInUI();
+          return promiseUtils.resolve();
         }).otherwise(console.warn);
       };
-
-      // SIGN OUT //
-      const userSignOut = () => {
-        IdentityManager.destroyCredentials();
-        this.base.portal = new Portal({});
-        this.base.portal.load().then(() => {
-          this.base.portal.user = null;
-          this.emit("portal-user-change", {});
-          return updateSignInUI();
-        }).otherwise(console.warn);
-
-      };
-
-      // USER SIGN IN //
-      on(signInNode, "click", userSignIn);
-
-      // SIGN OUT NODE //
-      const signOutNode = dom.byId("sign-out-node");
-      if(signOutNode) {
-        on(signOutNode, "click", userSignOut);
-      }
 
       return checkSignInStatus();
     },
@@ -476,78 +399,6 @@ define([
 
     /**
      *
-     * @param layer
-     * @param error
-     */
-    addLayerNotification: function (layer, error) {
-      const notificationsNode = dom.byId("notifications-node");
-
-      const alertNode = domConstruct.create("div", {
-        className: error ? this.CSS.NOTIFICATION_TYPE.ERROR : this.CSS.NOTIFICATION_TYPE.SUCCESS
-      }, notificationsNode);
-
-      const alertCloseNode = domConstruct.create("div", { className: "inline-block esri-interactive icon-ui-close margin-left-1 right" }, alertNode);
-      on.once(alertCloseNode, "click", () => {
-        domConstruct.destroy(alertNode);
-      });
-
-      domConstruct.create("div", { innerHTML: error ? error.message : `Layer '${layer.title}' added to map...` }, alertNode);
-
-      if(error) {
-        if(layer.portalItem) {
-          const itemDetailsPageUrl = `${this.base.portal.url}/home/item.html?id=${layer.portalItem.id}`;
-          domConstruct.create("a", { innerHTML: "view item details", target: "_blank", href: itemDetailsPageUrl }, alertNode);
-        }
-      } else {
-        setTimeout(() => {
-          domClass.toggle(alertNode, "animate-in-up animate-out-up");
-          setTimeout(() => {
-            domConstruct.destroy(alertNode);
-          }, 500)
-        }, 4000);
-      }
-    },
-
-    /**
-     *
-     * @param view
-     */
-    initializeHawaiiEarthquakeAnalysis_from_service_not_used: function (view) {
-
-      const lava_layer = new FeatureLayer({
-        url: "https://services.arcgis.com/8df8p0NlLFEShl0r/ArcGIS/rest/services/Hawaii_Earthquake_Analysis_WFL1/FeatureServer",
-        layerId: 0,
-        title: "Lava Flow"
-      });
-      view.map.add(lava_layer);
-      lava_layer.load().then(() => {
-        this.initializeLavaFlow(view, lava_layer);
-      });
-
-      const earthquakes_layer = new FeatureLayer({
-        url: "https://services.arcgis.com/8df8p0NlLFEShl0r/ArcGIS/rest/services/Hawaii_Earthquake_Analysis_WFL1/FeatureServer",
-        layerId: 1,
-        title: "Earthquakes",
-        outFields: ["*"],
-        popupTemplate: {
-          title: "M:{mag} D:{depth} - {place}",
-          content: "{*}"
-        },
-        definitionExpression: "depth_neg < 0.0",
-        elevationInfo: {
-          mode: "relative-to-ground",
-          featureExpressionInfo: {
-            expression: "$feature.depth_neg"
-          },
-          unit: "kilometers"
-        }
-      });
-      view.map.add(earthquakes_layer);
-
-    },
-
-    /**
-     *
      * @param view
      */
     initializeHawaiiEarthquakeAnalysis: function (view) {
@@ -572,6 +423,7 @@ define([
             const earthquakes_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
               return (layer.title === "Earthquakes 06182018");
             });
+            hawaii_earthquake_analysis_layer.layers.reorder(earthquakes_layer, 0);
             earthquakes_layer.definitionExpression = "depth_neg < 0.0";
             earthquakes_layer.elevationInfo = {
               mode: "absolute-height",
@@ -581,30 +433,122 @@ define([
               unit: "kilometers"
             };
 
-            // INITIALIZE EARTHQUAKE RENDERER //
-            this.createEarthquakeRenderer = this.initializeEarthquakeRenderer(earthquakes_layer.renderer, "Date_Time");
+            this.initializeMapViewAndStats(view, lava_layer, earthquakes_layer).then(() => {
 
-            // TIME CHANGE //
-            this.on("time-change", evt => {
-              lava_layer.renderer = this.createLavaRenderer(evt.dateTimeValue);
-              earthquakes_layer.renderer = this.createEarthquakeRenderer(evt.dateTimeValue)
-            });
+              // INITIALIZE EARTHQUAKE RENDERER //
+              this.createEarthquakeRenderer = this.initializeEarthquakeRenderer(earthquakes_layer.renderer, "Date_Time");
 
-            // GET COMBINED TIME EXTENT //
-            this.getLayerTimeExtent(lava_layer, "FieldTime").then((lava_time_stats) => {
-              this.getLayerTimeExtent(earthquakes_layer, "Date_Time").then((quakes_time_stats) => {
-                const time_extent = {
-                  min: new Date(Math.min(lava_time_stats.min, quakes_time_stats.min)),
-                  max: new Date(Math.max(lava_time_stats.max, quakes_time_stats.max))
-                };
-                // INITIALIZE TIME FILTER //
-                this.initializeTimeFilter(view, time_extent);
+              // TIME CHANGE //
+              this.on("time-change", evt => {
+                this.updateLavaStats(evt.dateTimeValue);
+                this.updateQuakeStats(evt.dateTimeValue);
+                lava_layer.renderer = this.createLavaRenderer(evt.dateTimeValue);
+                earthquakes_layer.renderer = this.createEarthquakeRenderer(evt.dateTimeValue);
               });
-            });
 
+              // GET COMBINED TIME EXTENT //
+              this.getLayerTimeExtent(lava_layer, "FieldTime").then((lava_time_stats) => {
+                this.getLayerTimeExtent(earthquakes_layer, "date_time").then((quakes_time_stats) => {
+                  const time_extent = {
+                    min: new Date(lava_time_stats.min),
+                    max: new Date(lava_time_stats.max)
+                    //min: new Date(Math.min(lava_time_stats.min, quakes_time_stats.min))
+                    //max: new Date(Math.max(lava_time_stats.max, quakes_time_stats.max))
+                  };
+                  // INITIALIZE TIME FILTER //
+                  this.initializeTimeFilter(view, time_extent);
+                });
+              });
+
+            });
           });
         });
       });
+
+    },
+
+    /**
+     *
+     * @param view
+     * @param lava_layer
+     * @param earthquakes_layer
+     */
+    initializeMapViewAndStats: function (view, lava_layer, earthquakes_layer) {
+
+      const map_view = new MapView({
+        container: "map-container",
+        map: view.map,
+        extent: view.extent
+      });
+      return map_view.when(() => {
+        return map_view.whenLayerView(lava_layer).then((lava_layerView) => {
+          return map_view.whenLayerView(earthquakes_layer).then((earthquakes_layerView) => {
+            // LAVA STATS //
+            this.updateLavaStats = this.initializeLavaStats(lava_layerView, "FieldTime");
+            // EARTHQUAKE STATS //
+            this.updateQuakeStats = this.initializeEarthquakeStats(earthquakes_layerView, "date_time");
+          });
+        });
+      });
+
+
+    },
+
+    /**
+     *
+     * @param layerView
+     * @param time_field
+     * @returns {*}
+     */
+    initializeLavaStats: function (layerView, time_field) {
+
+      const lava_area_node = dom.byId("lava-acres");
+
+      return (date_time_value) => {
+
+        const acres_statDef = new StatisticDefinition({
+          statisticType: "sum",
+          onStatisticField: "Acres",
+          outStatisticFieldName: "acres_total"
+        });
+
+        const acres_query = layerView.layer.createQuery();
+        acres_query.outFields = [time_field];
+        acres_query.outStatistics = [acres_statDef];
+        acres_query.where = `${time_field} < timestamp '${(new Date(date_time_value)).toAGSDateTimeString()}'`;
+        layerView.queryFeatures(acres_query).then((lava_featureSet) => {
+          const acres = lava_featureSet.features[0].attributes.acres_total;
+          lava_area_node.innerHTML = isNaN(acres) ? "-.-" : number.format(acres, { places: 1 });
+        }, console.error);
+
+      };
+
+    },
+
+    /**
+     *
+     * @param layerView
+     * @param time_field
+     * @returns {*}
+     */
+    initializeEarthquakeStats: function (layerView, time_field) {
+
+      const quake_count_node = dom.byId("quake-count");
+      const one_hour = (1000 * 60 * 60);
+
+      return (date_time_value) => {
+
+        const from_date = (new Date(date_time_value - (one_hour * 12))).toAGSDateTimeString();
+        const to_date = (new Date(date_time_value + (one_hour * 12))).toAGSDateTimeString();
+
+        const count_query = layerView.layer.createQuery();
+        count_query.outFields = [time_field];
+        count_query.where = `(${time_field} > timestamp '${from_date}') AND (${time_field} < timestamp '${to_date}')`;
+        layerView.queryFeatureCount(count_query).then((quake_count) => {
+          quake_count_node.innerHTML = isNaN(quake_count) ? "-" : number.format(quake_count, { places: 0 });
+        }, console.error);
+
+      };
 
     },
 
@@ -853,9 +797,9 @@ define([
                 value: date_time_value - (one_hour * 24)
               },
               {
-                label: "-6 hours",
+                label: "-12 hours",
                 opacity: 0.8,
-                value: date_time_value - (one_hour * 6)
+                value: date_time_value - (one_hour * 12)
               },
               {
                 label: "now",
@@ -863,9 +807,9 @@ define([
                 value: date_time_value
               },
               {
-                label: "+6 hours",
+                label: "+12 hours",
                 opacity: 0.0,
-                value: date_time_value + (one_hour * 6)
+                value: date_time_value + (one_hour * 12)
               }
             ],
             legendOptions: {

@@ -24,6 +24,7 @@
   const config = {
     async: true,
     locale: dojoLocale,
+    has: { "esri-featurelayer-webgl": 1 },
     packages: [
       { name: "calcite", location: "https://s3-us-west-1.amazonaws.com/patterns.esri.com/files/calcite-web/1.0.1/js", main: "calcite-web.min" },
       { name: "config", location: distPath + "/config" },
