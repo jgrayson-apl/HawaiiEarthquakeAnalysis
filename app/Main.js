@@ -171,8 +171,8 @@ define([
         view.ui.add(search, { position: "top-left", index: 0 });
 
         // HOME //
-        const homeWidget = new Home({ view: view });
-        view.ui.add(homeWidget, { position: "top-left", index: 1 });
+        // const homeWidget = new Home({ view: view });
+        // view.ui.add(homeWidget, { position: "top-left", index: 1 });
 
         // BASEMAPS //
         const basemapGalleryExpand = new Expand({
@@ -512,7 +512,7 @@ define([
      *
      * @param view
      */
-    initializeHawaiiEarthquakeAnalysis: function (view) {
+    initializeHawaiiEarthquakeAnalysis_from_service_not_used: function (view) {
 
       const lava_layer = new FeatureLayer({
         url: "https://services.arcgis.com/8df8p0NlLFEShl0r/ArcGIS/rest/services/Hawaii_Earthquake_Analysis_WFL1/FeatureServer",
@@ -529,12 +529,17 @@ define([
         layerId: 1,
         title: "Earthquakes",
         outFields: ["*"],
+        popupTemplate: {
+          title: "M:{mag} D:{depth} - {place}",
+          content: "{*}"
+        },
+        definitionExpression: "depth_neg < 0.0",
         elevationInfo: {
-          mode: "absolute-height",
+          mode: "relative-to-ground",
           featureExpressionInfo: {
-            expression: "$feature.depth_neg",
-            unit: "kilometers"
-          }
+            expression: "$feature.depth_neg"
+          },
+          unit: "kilometers"
         }
       });
       view.map.add(earthquakes_layer);
@@ -544,20 +549,121 @@ define([
     /**
      *
      * @param view
-     * @param lava_layer
      */
-    initializeLavaFlow: function (view, lava_layer) {
+    initializeHawaiiEarthquakeAnalysis: function (view) {
+
+      Layer.fromPortalItem({ portalItem: { id: "75d690620dfd46b893e65b4548409d52" } }).then((hawaii_earthquake_analysis_layer) => {
+        hawaii_earthquake_analysis_layer.load().then(() => {
+          view.map.add(hawaii_earthquake_analysis_layer);
+
+          const layers_to_hide = ["Major Roads", "Zoning Parcels"];
+          promiseUtils.eachAlways(hawaii_earthquake_analysis_layer.layers.map(layer => {
+            return layer.load().then(() => {
+              layer.visible = !layers_to_hide.includes(layer.title);
+            });
+          })).then(() => {
+
+            // LAVA //
+            const lava_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
+              return (layer.title === "Lava Flow Over Time");
+            });
+
+            // EARTHQUAKES //
+            const earthquakes_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
+              return (layer.title === "Earthquakes 06182018");
+            });
+            earthquakes_layer.definitionExpression = "depth_neg < 0.0";
+            earthquakes_layer.elevationInfo = {
+              mode: "absolute-height",
+              featureExpressionInfo: {
+                expression: "$feature.depth_neg",
+              },
+              unit: "kilometers"
+            };
+
+            // INITIALIZE EARTHQUAKE RENDERER //
+            this.createEarthquakeRenderer = this.initializeEarthquakeRenderer(earthquakes_layer.renderer, "Date_Time");
+
+            // TIME CHANGE //
+            this.on("time-change", evt => {
+              lava_layer.renderer = this.createLavaRenderer(evt.dateTimeValue);
+              earthquakes_layer.renderer = this.createEarthquakeRenderer(evt.dateTimeValue)
+            });
+
+            // GET COMBINED TIME EXTENT //
+            this.getLayerTimeExtent(lava_layer, "FieldTime").then((lava_time_stats) => {
+              this.getLayerTimeExtent(earthquakes_layer, "Date_Time").then((quakes_time_stats) => {
+                const time_extent = {
+                  min: new Date(Math.min(lava_time_stats.min, quakes_time_stats.min)),
+                  max: new Date(Math.max(lava_time_stats.max, quakes_time_stats.max))
+                };
+                // INITIALIZE TIME FILTER //
+                this.initializeTimeFilter(view, time_extent);
+              });
+            });
+
+          });
+        });
+      });
+
+    },
+
+    /**
+     *
+     * @param layer
+     * @param time_field
+     * @returns {Promise}
+     */
+    getLayerTimeExtent: function (layer, time_field) {
+
+      const time_min_stat = new StatisticDefinition({
+        statisticType: "min",
+        onStatisticField: time_field,
+        outStatisticFieldName: "time_min"
+      });
+      const time_max_stat = new StatisticDefinition({
+        statisticType: "max",
+        onStatisticField: time_field,
+        outStatisticFieldName: "time_max"
+      });
+
+      const time_query = layer.createQuery();
+      time_query.outStatistics = [time_min_stat, time_max_stat];
+      return layer.queryFeatures(time_query).then(stats_features => {
+        const time_stats = stats_features.features[0].attributes;
+        return {
+          min: time_stats.time_min,
+          max: time_stats.time_max
+        };
+      });
+
+    },
+
+    /**
+     *
+     * @param view
+     * @param timeExtent
+     */
+    initializeTimeFilter: function (view, timeExtent) {
 
       const current_time_info = {
-        min: null,
-        max: null
+        min: timeExtent.min,
+        max: timeExtent.max
       };
 
       const format_date = (date_time) => {
         return locale.format(date_time, { datePattern: "MMMM d", timePattern: "h:mm a" });
       };
 
+      dom.byId("current-time-node").innerHTML = format_date(current_time_info.min);
+      dom.byId("time-range-node").innerHTML = `${format_date(current_time_info.min)}&nbsp;&nbsp;&nbsp;to&nbsp;&nbsp;&nbsp;${format_date(current_time_info.max)}`;
+
       const time_input = dom.byId("time-input");
+      time_input.min = current_time_info.min.valueOf();
+      time_input.max = current_time_info.max.valueOf();
+      time_input.valueAsNumber = time_input.min;
+      domClass.remove(time_input, "btn-disabled");
+
       on(time_input, "input", () => {
         update_time_filter();
       });
@@ -572,38 +678,10 @@ define([
 
       const update_time_filter = () => {
         dom.byId("current-time-node").innerHTML = format_date(new Date(time_input.valueAsNumber));
-        lava_layer.renderer = this.createLavaRenderer(time_input.valueAsNumber);
+        this.emit("time-change", { dateTimeValue: time_input.valueAsNumber })
       };
 
-      const time_min_stat = new StatisticDefinition({
-        statisticType: "min",
-        onStatisticField: "FieldTime",
-        outStatisticFieldName: "time_min"
-      });
-      const time_max_stat = new StatisticDefinition({
-        statisticType: "max",
-        onStatisticField: "FieldTime",
-        outStatisticFieldName: "time_max"
-      });
-
-      const time_query = lava_layer.createQuery();
-      time_query.outStatistics = [time_min_stat, time_max_stat];
-      lava_layer.queryFeatures(time_query).then(stats_features => {
-        const time_stats = stats_features.features[0].attributes;
-
-        current_time_info.min = new Date(time_stats.time_min);
-        current_time_info.max = new Date(time_stats.time_max);
-
-        dom.byId("current-time-node").innerHTML = format_date(current_time_info.min);
-        dom.byId("time-range-node").innerHTML = `${format_date(current_time_info.min)}&nbsp;&nbsp;&nbsp;to&nbsp;&nbsp;&nbsp;${format_date(current_time_info.max)}`;
-
-        time_input.min = current_time_info.min.valueOf();
-        time_input.max = current_time_info.max.valueOf();
-        time_input.valueAsNumber = time_input.min;
-        domClass.remove(time_input, "btn-disabled");
-
-        update_time_filter();
-      });
+      update_time_filter();
 
 
       //
@@ -640,12 +718,14 @@ define([
 
           value += (one_hour * 3);
           if(value > current_time_info.max.valueOf()) {
-            value = current_time_info.min.valueOf()
+            setTimeout(() => {
+              value = current_time_info.min.valueOf()
+            }, 1500);
           }
 
           set_time(value);
 
-          setTimeout(function () {
+          setTimeout(() => {
             requestAnimationFrame(frame);
           }, 1000 / 30);
         };
@@ -746,6 +826,62 @@ define([
 
     /**
      *
+     * @param default_renderer
+     * @param time_field
+     */
+    initializeEarthquakeRenderer: function (default_renderer, time_field) {
+
+      const one_hour = (1000 * 60 * 60);
+
+      return (date_time_value) => {
+
+        const renderer = default_renderer.clone();
+        renderer.defaultSymbol = null;
+        renderer.visualVariables = [
+          {
+            type: "opacity",
+            field: time_field,
+            stops: [
+              {
+                label: "previous",
+                opacity: 0.0,
+                value: 0
+              },
+              {
+                label: "-24 hours",
+                opacity: 0.0,
+                value: date_time_value - (one_hour * 24)
+              },
+              {
+                label: "-6 hours",
+                opacity: 0.8,
+                value: date_time_value - (one_hour * 6)
+              },
+              {
+                label: "now",
+                opacity: 1.0,
+                value: date_time_value
+              },
+              {
+                label: "+6 hours",
+                opacity: 0.0,
+                value: date_time_value + (one_hour * 6)
+              }
+            ],
+            legendOptions: {
+              showLegend: true
+            }
+
+          }
+        ];
+
+        return renderer;
+      }
+
+    },
+
+    /**
+     *
      * @param view
      */
     initializeUndergroundDisplay: function (view) {
@@ -770,12 +906,15 @@ define([
         view.map.ground.navigationConstraint = { type: "none" };
 
         // SEE THROUGH GROUND //
-        const seeThroughBtn = domConstruct.create("button", { className: "btn btn-clear icon-ui-experimental icon-ui-flush btn-disabled" });
+        const seeThroughBtn = domConstruct.create("button", {
+          title: "Toggle Ground Opacity",
+          className: "btn btn-clear icon-ui-experimental icon-ui-flush btn-disabled"
+        });
         view.ui.add(seeThroughBtn, "top-right");
         on(seeThroughBtn, "click", () => {
           domClass.toggle(seeThroughBtn, "btn-clear icon-ui-check-mark");
           if(domClass.contains(seeThroughBtn, "icon-ui-check-mark")) {
-            view.map.ground.opacity = 0.6;
+            view.map.ground.opacity = 0.5;
             /* view.basemapTerrain.wireframe = {
                mode: "shader",
                wireOpacity: 1.0,
