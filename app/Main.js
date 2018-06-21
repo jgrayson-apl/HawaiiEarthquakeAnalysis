@@ -528,7 +528,7 @@ define([
         url: "https://services.arcgis.com/8df8p0NlLFEShl0r/ArcGIS/rest/services/Hawaii_Earthquake_Analysis_WFL1/FeatureServer",
         layerId: 1,
         title: "Earthquakes",
-        hasZ: false,
+        outFields: ["*"],
         elevationInfo: {
           mode: "absolute-height",
           featureExpressionInfo: {
@@ -771,7 +771,7 @@ define([
 
         // SEE THROUGH GROUND //
         const seeThroughBtn = domConstruct.create("button", { className: "btn btn-clear icon-ui-experimental icon-ui-flush btn-disabled" });
-        view.ui.add(seeThroughBtn, "bottom-left");
+        view.ui.add(seeThroughBtn, "top-right");
         on(seeThroughBtn, "click", () => {
           domClass.toggle(seeThroughBtn, "btn-clear icon-ui-check-mark");
           if(domClass.contains(seeThroughBtn, "icon-ui-check-mark")) {
