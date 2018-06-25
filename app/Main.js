@@ -40,6 +40,7 @@ define([
   "esri/layers/FeatureLayer",
   "esri/tasks/support/StatisticDefinition",
   "esri/geometry/Extent",
+  "esri/geometry/geometryEngine",
   "esri/widgets/Feature",
   "esri/widgets/Home",
   "esri/widgets/Search",
@@ -53,7 +54,7 @@ define([
 ], function (calcite, declare, ApplicationBase, i18n, itemUtils, domHelper,
              Color, colors, locale, number, on, query, dom, domClass, domConstruct,
              IdentityManager, Evented, watchUtils, promiseUtils, Portal, MapView, Layer, FeatureLayer, StatisticDefinition,
-             Extent, Feature, Home, Search, LayerList, Legend, Print, ScaleBar, Compass, BasemapGallery, Expand) {
+             Extent, geometryEngine, Feature, Home, Search, LayerList, Legend, Print, ScaleBar, Compass, BasemapGallery, Expand) {
 
 
   // CONVERT DATE TO VALID AGS DATE/TIME STRING //
@@ -198,94 +199,6 @@ define([
         // PLACES //
         this.initializePlaces(view);
 
-        //
-        // LAYER LIST //
-        //
-        // CREATE OPACITY NODE //
-        const createOpacityNode = (item, parent_node) => {
-          const opacity_node = domConstruct.create("div", { className: "opacity-node esri-widget", title: "Layer Opacity" }, parent_node);
-          // domConstruct.create("span", { className: "font-size--3", innerHTML: "Opacity:" }, opacity_node);
-          const opacity_input = domConstruct.create("input", { className: "opacity-input", type: "range", min: 0, max: 1.0, value: item.layer.opacity, step: 0.01 }, opacity_node);
-          on(opacity_input, "input", () => {
-            item.layer.opacity = opacity_input.valueAsNumber;
-          });
-          item.layer.watch("opacity", (opacity) => {
-            opacity_input.valueAsNumber = opacity;
-          });
-          opacity_input.valueAsNumber = item.layer.opacity;
-          return opacity_node;
-        };
-        // CREATE TOOLS NODE //
-        const createToolsNode = (item, parent_node) => {
-          // TOOLS NODE //
-          const tools_node = domConstruct.create("div", { className: "opacity-node esri-widget" }, parent_node);
-
-          // REORDER //
-          const reorder_node = domConstruct.create("div", { className: "inline-block" }, tools_node);
-          const reorder_up_node = domConstruct.create("button", { className: "btn-link icon-ui-up", title: "Move layer up..." }, reorder_node);
-          const reorder_down_node = domConstruct.create("button", { className: "btn-link icon-ui-down", title: "Move layer down..." }, reorder_node);
-          on(reorder_up_node, "click", () => {
-            view.map.reorder(item.layer, view.map.layers.indexOf(item.layer) + 1);
-          });
-          on(reorder_down_node, "click", () => {
-            view.map.reorder(item.layer, view.map.layers.indexOf(item.layer) - 1);
-          });
-
-          // REMOVE LAYER //
-          const remove_layer_node = domConstruct.create("button", { className: "btn-link icon-ui-close right", title: "Remove layer from map..." }, tools_node);
-          on.once(remove_layer_node, "click", () => {
-            view.map.remove(item.layer);
-            this.emit("layer-removed", item.layer);
-          });
-
-          // ZOOM TO //
-          const zoom_to_node = domConstruct.create("button", { className: "btn-link icon-ui-zoom-in-magnifying-glass right", title: "Zoom to Layer" }, tools_node);
-          on(zoom_to_node, "click", () => {
-            view.goTo(item.layer.fullExtent);
-          });
-
-          // LAYER DETAILS //
-          const itemDetailsPageUrl = `${this.base.portal.url}/home/item.html?id=${item.layer.portalItem.id}`;
-          domConstruct.create("a", { className: "btn-link icon-ui-description icon-ui-blue right", title: "View details...", target: "_blank", href: itemDetailsPageUrl }, tools_node);
-
-          return tools_node;
-        };
-        // LAYER LIST //
-        const layerList = new LayerList({
-          view: view,
-          listItemCreatedFunction: (evt) => {
-            let item = evt.item;
-            if(item.layer && item.layer.portalItem) {
-
-              // CREATE ITEM PANEL //
-              const panel_node = domConstruct.create("div", { className: "esri-widget" });
-
-              // LAYER TOOLS //
-              createToolsNode(item, panel_node);
-
-              // OPACITY //
-              createOpacityNode(item, panel_node);
-
-              // if(item.layer.type === "imagery") {
-              //   this.configureImageryLayer(view, item.layer, panel_node);
-              // }
-
-              // LEGEND //
-              if(item.layer.legendEnabled) {
-                const legend = new Legend({ container: panel_node, view: view, layerInfos: [{ layer: item.layer }] })
-              }
-
-              // SET ITEM PANEL //
-              item.panel = {
-                title: "Settings",
-                className: "esri-icon-settings",
-                content: panel_node
-              };
-            }
-          }
-        });
-        view.ui.add(layerList, { position: "top-right", index: 0 });
-
         this.initializeUndergroundDisplay(view);
 
         this.initializeHawaiiEarthquakeAnalysis(view);
@@ -407,7 +320,7 @@ define([
         hawaii_earthquake_analysis_layer.load().then(() => {
           view.map.add(hawaii_earthquake_analysis_layer);
 
-          const layers_to_hide = ["Major Roads", "Zoning Parcels"];
+          const layers_to_hide = ["Major Roads"];
           promiseUtils.eachAlways(hawaii_earthquake_analysis_layer.layers.map(layer => {
             return layer.load().then(() => {
               layer.visible = !layers_to_hide.includes(layer.title);
@@ -423,7 +336,7 @@ define([
             const earthquakes_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
               return (layer.title === "Earthquakes 06182018");
             });
-            hawaii_earthquake_analysis_layer.layers.reorder(earthquakes_layer, 0);
+            hawaii_earthquake_analysis_layer.layers.reorder(earthquakes_layer, hawaii_earthquake_analysis_layer.layers.length - 1);
             earthquakes_layer.definitionExpression = "depth_neg < 0.0";
             earthquakes_layer.elevationInfo = {
               mode: "absolute-height",
@@ -433,17 +346,23 @@ define([
               unit: "kilometers"
             };
 
-            this.initializeMapViewAndStats(view, lava_layer, earthquakes_layer).then(() => {
+            // PARCELS LAYER //
+            const parcels_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
+              return (layer.title === "Zoning Parcels");
+            });
+            parcels_layer.opacity = 0.8;
+
+            this.initializeMapViewAndStats(view, lava_layer, earthquakes_layer, parcels_layer).then(() => {
 
               // INITIALIZE EARTHQUAKE RENDERER //
               this.createEarthquakeRenderer = this.initializeEarthquakeRenderer(earthquakes_layer.renderer, "Date_Time");
 
               // TIME CHANGE //
               this.on("time-change", evt => {
-                this.updateLavaStats(evt.dateTimeValue);
-                this.updateQuakeStats(evt.dateTimeValue);
                 lava_layer.renderer = this.createLavaRenderer(evt.dateTimeValue);
                 earthquakes_layer.renderer = this.createEarthquakeRenderer(evt.dateTimeValue);
+                this.updateLavaStats(evt.dateTimeValue);
+                this.updateQuakeStats(evt.dateTimeValue);
               });
 
               // GET COMBINED TIME EXTENT //
@@ -472,25 +391,227 @@ define([
      * @param view
      * @param lava_layer
      * @param earthquakes_layer
+     * @param parcels_layer
      */
-    initializeMapViewAndStats: function (view, lava_layer, earthquakes_layer) {
+    initializeMapViewAndStats: function (view, lava_layer, earthquakes_layer, parcels_layer) {
 
       const map_view = new MapView({
         container: "map-container",
         map: view.map,
+        ui: { components: ["zoom"] },
         extent: view.extent
       });
       return map_view.when(() => {
+
+        //
+        // LAYER LIST //
+        //
+        // CREATE OPACITY NODE //
+        const createOpacityNode = (item, parent_node) => {
+          const opacity_node = domConstruct.create("div", { className: "opacity-node esri-widget", title: "Layer Opacity" }, parent_node);
+          // domConstruct.create("span", { className: "font-size--3", innerHTML: "Opacity:" }, opacity_node);
+          const opacity_input = domConstruct.create("input", { className: "opacity-input", type: "range", min: 0, max: 1.0, value: item.layer.opacity, step: 0.01 }, opacity_node);
+          on(opacity_input, "input", () => {
+            item.layer.opacity = opacity_input.valueAsNumber;
+          });
+          item.layer.watch("opacity", (opacity) => {
+            opacity_input.valueAsNumber = opacity;
+          });
+          opacity_input.valueAsNumber = item.layer.opacity;
+          return opacity_node;
+        };
+        // CREATE TOOLS NODE //
+        const createToolsNode = (item, parent_node) => {
+          // TOOLS NODE //
+          const tools_node = domConstruct.create("div", { className: "opacity-node esri-widget" }, parent_node);
+
+          // REORDER //
+          const reorder_node = domConstruct.create("div", { className: "inline-block" }, tools_node);
+          const reorder_up_node = domConstruct.create("button", { className: "btn-link icon-ui-up", title: "Move layer up..." }, reorder_node);
+          const reorder_down_node = domConstruct.create("button", { className: "btn-link icon-ui-down", title: "Move layer down..." }, reorder_node);
+          on(reorder_up_node, "click", () => {
+            map_view.map.reorder(item.layer, map_view.map.layers.indexOf(item.layer) + 1);
+          });
+          on(reorder_down_node, "click", () => {
+            map_view.map.reorder(item.layer, map_view.map.layers.indexOf(item.layer) - 1);
+          });
+
+          // REMOVE LAYER //
+          const remove_layer_node = domConstruct.create("button", { className: "btn-link icon-ui-close right", title: "Remove layer from map..." }, tools_node);
+          on.once(remove_layer_node, "click", () => {
+            map_view.map.remove(item.layer);
+            this.emit("layer-removed", item.layer);
+          });
+
+          // ZOOM TO //
+          const zoom_to_node = domConstruct.create("button", { className: "btn-link icon-ui-zoom-in-magnifying-glass right", title: "Zoom to Layer" }, tools_node);
+          on(zoom_to_node, "click", () => {
+            map_view.goTo(item.layer.fullExtent);
+          });
+
+          // LAYER DETAILS //
+          const itemDetailsPageUrl = `${this.base.portal.url}/home/item.html?id=${item.layer.portalItem.id}`;
+          domConstruct.create("a", { className: "btn-link icon-ui-description icon-ui-blue right", title: "View details...", target: "_blank", href: itemDetailsPageUrl }, tools_node);
+
+          return tools_node;
+        };
+        // LAYER LIST //
+        const layerList = new LayerList({
+          view: view,
+          listItemCreatedFunction: (evt) => {
+            let item = evt.item;
+            if(item.layer && item.layer.portalItem) {
+
+              // CREATE ITEM PANEL //
+              const panel_node = domConstruct.create("div", { className: "esri-widget" });
+
+              // LAYER TOOLS //
+              createToolsNode(item, panel_node);
+
+              // OPACITY //
+              createOpacityNode(item, panel_node);
+
+              // if(item.layer.type === "imagery") {
+              //   this.configureImageryLayer(view, item.layer, panel_node);
+              // }
+
+              // LEGEND //
+              if(item.layer.legendEnabled) {
+                const legend = new Legend({ container: panel_node, view: view, layerInfos: [{ layer: item.layer }] })
+              }
+
+              // SET ITEM PANEL //
+              item.panel = {
+                title: "Settings",
+                className: "esri-icon-settings",
+                content: panel_node
+              };
+            }
+          }
+        });
+        map_view.ui.add(layerList, { position: "top-right", index: 0 });
+
+        // SYNC VIEWS //
+        this.syncViews([view, map_view]);
+
         return map_view.whenLayerView(lava_layer).then((lava_layerView) => {
           return map_view.whenLayerView(earthquakes_layer).then((earthquakes_layerView) => {
-            // LAVA STATS //
-            this.updateLavaStats = this.initializeLavaStats(lava_layerView, "FieldTime");
-            // EARTHQUAKE STATS //
-            this.updateQuakeStats = this.initializeEarthquakeStats(earthquakes_layerView, "date_time");
+            return map_view.whenLayerView(parcels_layer).then((parcels_layerView) => {
+
+              // LAVA STATS //
+              this.updateLavaStats = this.initializeLavaStats(lava_layerView, "FieldTime");
+              // EARTHQUAKE STATS //
+              this.updateQuakeStats = this.initializeEarthquakeStats(earthquakes_layerView, "date_time");
+              // PARCEL HIGHLIGHT //
+              this.highlightIntersction = this.initializeHighlight(parcels_layerView);
+
+              return promiseUtils.eachAlways([
+                watchUtils.whenFalseOnce(lava_layerView, "updating"),
+                watchUtils.whenFalseOnce(earthquakes_layerView, "updating"),
+                watchUtils.whenFalseOnce(parcels_layerView, "updating"),
+              ]);
+            });
           });
         });
       });
 
+    },
+
+    /**
+     *
+     * @param views
+     */
+    syncViews: function (views) {
+
+      const synchronizeView = (view, others) => {
+        others = Array.isArray(others) ? others : [others];
+
+        let viewpointWatchHandle;
+        let mouseWheelHandle;
+        let viewStationaryHandle;
+        let otherInteractHandlers;
+        let scheduleId;
+
+        const clear = () => {
+          if(otherInteractHandlers) {
+            otherInteractHandlers.forEach((handle) => {
+              handle.remove();
+            });
+          }
+          viewpointWatchHandle && viewpointWatchHandle.remove();
+          mouseWheelHandle && mouseWheelHandle.remove();
+          viewStationaryHandle && viewStationaryHandle.remove();
+          scheduleId && clearTimeout(scheduleId);
+          otherInteractHandlers = viewpointWatchHandle = mouseWheelHandle = viewStationaryHandle = scheduleId = null;
+        };
+
+        const interactWatcher = view.watch('interacting,animation', (newValue) => {
+          if(!newValue) { return; }
+          if(viewpointWatchHandle || mouseWheelHandle || scheduleId) { return; }
+
+          if(!view.animation) {
+            others.forEach((otherView) => {
+              otherView.viewpoint = view.viewpoint;
+            });
+          }
+
+          // start updating the other views at the next frame
+          scheduleId = setTimeout(() => {
+            scheduleId = null;
+            viewpointWatchHandle = view.watch('viewpoint', (newValue) => {
+              others.forEach((otherView) => {
+                otherView.viewpoint = newValue;
+              });
+            });
+            /*if(view.type === "2d") {
+              mouseWheelHandle = view.on("mouse-wheel", () => {
+                others.forEach((otherView) => {
+                  otherView.viewpoint = view.viewpoint;
+                });
+              });
+            }*/
+          }, 0);
+
+          // stop as soon as another view starts interacting, like if the user starts panning
+          otherInteractHandlers = others.map((otherView) => {
+            return watchUtils.watch(otherView, 'interacting,animation', (value) => {
+              if(value) { clear(); }
+            });
+          });
+
+          // or stop when the view is stationary again
+          viewStationaryHandle = watchUtils.whenTrue(view, 'stationary', clear);
+        });
+
+        return {
+          remove: () => {
+            this.remove = () => {
+            };
+            clear();
+            interactWatcher.remove();
+          }
+        }
+      };
+      const synchronizeViews = (views) => {
+        let handles = views.map((view, idx, views) => {
+          const others = views.concat();
+          others.splice(idx, 1);
+          return synchronizeView(view, others);
+        });
+
+        return {
+          remove: () => {
+            this.remove = () => {
+            };
+            handles.forEach((h) => {
+              h.remove();
+            });
+            handles = null;
+          }
+        }
+      };
+
+      synchronizeViews(views);
 
     },
 
@@ -506,19 +627,27 @@ define([
 
       return (date_time_value) => {
 
-        const acres_statDef = new StatisticDefinition({
+        /*const acres_statDef = new StatisticDefinition({
           statisticType: "sum",
           onStatisticField: "Acres",
           outStatisticFieldName: "acres_total"
-        });
+        });*/
 
         const acres_query = layerView.layer.createQuery();
         acres_query.outFields = [time_field];
-        acres_query.outStatistics = [acres_statDef];
+        //acres_query.outStatistics = [acres_statDef];
         acres_query.where = `${time_field} < timestamp '${(new Date(date_time_value)).toAGSDateTimeString()}'`;
         layerView.queryFeatures(acres_query).then((lava_featureSet) => {
-          const acres = lava_featureSet.features[0].attributes.acres_total;
+
+          const lava_polygons = lava_featureSet.features.map(lava_feature => {
+            return lava_feature.geometry.clone();
+          });
+          const lava_polygon = geometryEngine.union(lava_polygons);
+          const acres = geometryEngine.geodesicArea(lava_polygon, "acres");
           lava_area_node.innerHTML = isNaN(acres) ? "-.-" : number.format(acres, { places: 1 });
+
+          this.highlightIntersction(lava_polygon);
+
         }, console.error);
 
       };
@@ -627,7 +756,6 @@ define([
 
       update_time_filter();
 
-
       //
       // ANIMATION STUFF //
       //
@@ -659,16 +787,11 @@ define([
           if(!animating) {
             return;
           }
-
           value += (one_hour * 3);
           if(value > current_time_info.max.valueOf()) {
-            setTimeout(() => {
-              value = current_time_info.min.valueOf()
-            }, 1500);
+            value = current_time_info.min.valueOf()
           }
-
           set_time(value);
-
           setTimeout(() => {
             requestAnimationFrame(frame);
           }, 1000 / 30);
@@ -821,6 +944,43 @@ define([
 
         return renderer;
       }
+
+    },
+
+
+    /**
+     *
+     * @param layerView
+     * @returns {function(*=)}
+     */
+    initializeHighlight: function (layerView) {
+
+      // HIGHLIGHT //
+      let highlightHandle = null;
+      layerView.view.highlightOptions = {
+        color: Color.named.yellow,
+        haloOpacity: 0.6,
+        fillOpacity: 0.1
+      };
+
+      let query_handle = null;
+      return (lava_polygon) => {
+        query_handle && (!query_handle.isFulfilled()) && query_handle.cancel();
+
+        const count_query = layerView.layer.createQuery();
+        count_query.geometry = lava_polygon;
+
+        query_handle = layerView.queryObjectIds(count_query).then((ids) => {
+          if(highlightHandle) {
+            highlightHandle.remove();
+            highlightHandle = null;
+          }
+          highlightHandle = layerView.highlight(ids);
+
+          dom.byId("parcels-count").innerHTML = number.format(ids.length);
+        });
+
+      };
 
     },
 

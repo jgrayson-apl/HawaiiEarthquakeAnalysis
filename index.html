@@ -84,10 +84,15 @@
 
     <div id="main-container">
 
+      <div id="content-container">
+        <div id="scene-container" class=""></div>
+        <div id="map-container" class=""></div>
+      </div>
+
       <div id="time-container">
-        <div class="panel">
-          <div id="current-time-node" class="text-center text-blue font-size-1 avenir-demi trailer-0"></div>
-          <div class="input-group padding-left-2 padding-right-2">
+        <div class="panel panel-dark-blue">
+          <div id="current-time-node" class="text-center font-size-1 avenir-demi trailer-0"></div>
+          <div class="input-group padding-left-3 padding-right-3">
             <span class="input-group-button">
               <button id="play-pause-btn" class="btn-link icon-ui-play"></button>
             </span>
@@ -97,25 +102,25 @@
         </div>
       </div>
 
-      <div id="content-container">
-        <div id="scene-container" class=""></div>
-        <div id="map-container" class=""></div>
+      <div id="stats-container" class="">
+        <div id="lava-panel" class="panel panel-dark-blue stat-panel">
+          <div class="font-size-0">Lava Coverage Area</div>
+          <div id="lava-acres" class="text-center avenir-demi font-size-7">-.-</div>
+          <div class="avenir-italic font-size--2 right">acres</div>
+        </div>
+        <div id="parcels-panel" class="panel panel-dark-blue stat-panel">
+          <div class="font-size-0">Parcels Count</div>
+          <div id="parcels-count" class="text-center avenir-demi font-size-7">-</div>
+          <div class="avenir-italic font-size--2 right">intersected by lava</div>
+        </div>
+        <div id="quake-panel" class="panel panel-dark-blue stat-panel">
+          <div class="font-size-0">Earthquake Count</div>
+          <div id="quake-count" class="text-center avenir-demi font-size-7">-</div>
+          <div class="avenir-italic font-size--2 right">&plusmn;12 hours</div>
+        </div>
+        <!--<div class="panel stat-panel"></div>-->
       </div>
 
-      <div id="stats-container" class="">
-        <div id="lava-panel" class="panel stat-panel">
-          <div class="text-blue font-size-0">Lava Coverage Area</div>
-          <div id="lava-acres" class="text-center avenir-demi font-size-7">-.-</div>
-          <div class="avenir-italic text-dark-gray font-size--2 right">acres</div>
-        </div>
-        <div id="quake-panel" class="panel stat-panel">
-          <div class="text-blue font-size-0">Earthquake Count</div>
-          <div id="quake-count" class="text-center avenir-demi font-size-7">-</div>
-          <div class="avenir-italic text-dark-gray font-size--2 right">&plusmn;12 hours</div>
-        </div>
-        <!--<div class="panel stat-panel"></div>-->
-        <!--<div class="panel stat-panel"></div>-->
-      </div>
 
     </div>
 
