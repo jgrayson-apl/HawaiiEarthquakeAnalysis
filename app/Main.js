@@ -316,23 +316,29 @@ define([
      */
     initializeHawaiiEarthquakeAnalysis: function (view) {
 
+      //
+      // THIS ITEM POINTS TO A SERVICE WITH MULTIPLE LAYERS SO A GROUP LAYER IS RETURNED //
+      //
       Layer.fromPortalItem({ portalItem: { id: "75d690620dfd46b893e65b4548409d52" } }).then((hawaii_earthquake_analysis_layer) => {
         hawaii_earthquake_analysis_layer.load().then(() => {
+          // ADD GROUP LAYER TO MAP //
           view.map.add(hawaii_earthquake_analysis_layer);
 
+          // CHILD LAYERS OF A GROUP LAYER NEED TO LOADED BEFORE YOU CAN CHECK THE TITLES //
           const layers_to_hide = ["Major Roads"];
           promiseUtils.eachAlways(hawaii_earthquake_analysis_layer.layers.map(layer => {
             return layer.load().then(() => {
+              // OVERRIDE VISIBILITY //
               layer.visible = !layers_to_hide.includes(layer.title);
             });
           })).then(() => {
 
-            // LAVA //
+            // LAVA LAYER //
             const lava_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
               return (layer.title === "Lava Flow Over Time");
             });
 
-            // EARTHQUAKES //
+            // EARTHQUAKES LAYER //
             const earthquakes_layer = hawaii_earthquake_analysis_layer.layers.find(layer => {
               return (layer.title === "Earthquakes 06182018");
             });
@@ -352,33 +358,38 @@ define([
             });
             parcels_layer.opacity = 0.8;
 
-            this.initializeMapViewAndStats(view, lava_layer, earthquakes_layer, parcels_layer).then(() => {
+            // GET COMBINED TIME EXTENT //
+            this.getLayerTimeExtent(lava_layer, "FieldTime").then((lava_time_stats) => {
+              // this.getLayerTimeExtent(earthquakes_layer, "date_time").then((quakes_time_stats) => {
+              const time_extent = {
+                min: new Date(lava_time_stats.min),
+                max: new Date(lava_time_stats.max)
+                //min: new Date(Math.min(lava_time_stats.min, quakes_time_stats.min))
+                //max: new Date(Math.max(lava_time_stats.max, quakes_time_stats.max))
+              };
 
               // INITIALIZE EARTHQUAKE RENDERER //
               this.createEarthquakeRenderer = this.initializeEarthquakeRenderer(earthquakes_layer.renderer, "Date_Time");
 
+              // UPDATE RENDERERS //
+              const update_renderers = (date_time_value) => {
+                lava_layer.renderer = this.createLavaRenderer(date_time_value);
+                earthquakes_layer.renderer = this.createEarthquakeRenderer(date_time_value);
+              };
+              // SET INITIAL RENDERERS BASED ON MIN TIME //
+              update_renderers(lava_time_stats.min);
+
               // TIME CHANGE //
               this.on("time-change", evt => {
-                lava_layer.renderer = this.createLavaRenderer(evt.dateTimeValue);
-                earthquakes_layer.renderer = this.createEarthquakeRenderer(evt.dateTimeValue);
-                this.updateLavaStats(evt.dateTimeValue);
-                this.updateQuakeStats(evt.dateTimeValue);
+                update_renderers(evt.dateTimeValue);
               });
 
-              // GET COMBINED TIME EXTENT //
-              this.getLayerTimeExtent(lava_layer, "FieldTime").then((lava_time_stats) => {
-                this.getLayerTimeExtent(earthquakes_layer, "date_time").then((quakes_time_stats) => {
-                  const time_extent = {
-                    min: new Date(lava_time_stats.min),
-                    max: new Date(lava_time_stats.max)
-                    //min: new Date(Math.min(lava_time_stats.min, quakes_time_stats.min))
-                    //max: new Date(Math.max(lava_time_stats.max, quakes_time_stats.max))
-                  };
-                  // INITIALIZE TIME FILTER //
-                  this.initializeTimeFilter(view, time_extent);
-                });
+              // INITIALIZE MAP VIEW AND STATS //
+              this.initializeMapViewAndStats(view, lava_layer, earthquakes_layer, parcels_layer, lava_time_stats.min).then(() => {
+                // INITIALIZE TIME FILTER //
+                this.initializeTimeFilter(view, time_extent);
               });
-
+              // });
             });
           });
         });
@@ -392,16 +403,26 @@ define([
      * @param lava_layer
      * @param earthquakes_layer
      * @param parcels_layer
+     * @param time_min_value
      */
-    initializeMapViewAndStats: function (view, lava_layer, earthquakes_layer, parcels_layer) {
+    initializeMapViewAndStats: function (view, lava_layer, earthquakes_layer, parcels_layer, time_min_value) {
 
       const map_view = new MapView({
         container: "map-container",
         map: view.map,
         ui: { components: ["zoom"] },
-        extent: view.extent
+        viewpoint: view.viewpoint
       });
       return map_view.when(() => {
+
+        // LOADING //
+        const updating_node = domConstruct.create("div", { className: "view-loading-node loader" });
+        domConstruct.create("div", { className: "loader-bars" }, updating_node);
+        domConstruct.create("div", { className: "loader-text font-size--3 text-white", innerHTML: "Updating..." }, updating_node);
+        map_view.ui.add(updating_node, "bottom-right");
+        watchUtils.init(map_view, "updating", (updating) => {
+          domClass.toggle(updating_node, "is-active", updating);
+        });
 
         //
         // LAYER LIST //
@@ -491,9 +512,6 @@ define([
         });
         map_view.ui.add(layerList, { position: "top-right", index: 0 });
 
-        // SYNC VIEWS //
-        this.syncViews([view, map_view]);
-
         return map_view.whenLayerView(lava_layer).then((lava_layerView) => {
           return map_view.whenLayerView(earthquakes_layer).then((earthquakes_layerView) => {
             return map_view.whenLayerView(parcels_layer).then((parcels_layerView) => {
@@ -505,11 +523,20 @@ define([
               // PARCEL HIGHLIGHT //
               this.highlightIntersction = this.initializeHighlight(parcels_layerView);
 
+              this.on("time-change", evt => {
+                this.updateLavaStats(evt.dateTimeValue);
+                this.updateQuakeStats(evt.dateTimeValue);
+              });
+
+              // SYNC VIEWS //
+              this.syncViews([view, map_view]);
+
               return promiseUtils.eachAlways([
                 watchUtils.whenFalseOnce(lava_layerView, "updating"),
                 watchUtils.whenFalseOnce(earthquakes_layerView, "updating"),
-                watchUtils.whenFalseOnce(parcels_layerView, "updating"),
+                watchUtils.whenFalseOnce(parcels_layerView, "updating")
               ]);
+
             });
           });
         });
@@ -527,7 +554,6 @@ define([
         others = Array.isArray(others) ? others : [others];
 
         let viewpointWatchHandle;
-        let mouseWheelHandle;
         let viewStationaryHandle;
         let otherInteractHandlers;
         let scheduleId;
@@ -539,15 +565,14 @@ define([
             });
           }
           viewpointWatchHandle && viewpointWatchHandle.remove();
-          mouseWheelHandle && mouseWheelHandle.remove();
           viewStationaryHandle && viewStationaryHandle.remove();
           scheduleId && clearTimeout(scheduleId);
-          otherInteractHandlers = viewpointWatchHandle = mouseWheelHandle = viewStationaryHandle = scheduleId = null;
+          otherInteractHandlers = viewpointWatchHandle = viewStationaryHandle = scheduleId = null;
         };
 
         const interactWatcher = view.watch('interacting,animation', (newValue) => {
           if(!newValue) { return; }
-          if(viewpointWatchHandle || mouseWheelHandle || scheduleId) { return; }
+          if(viewpointWatchHandle || scheduleId) { return; }
 
           if(!view.animation) {
             others.forEach((otherView) => {
@@ -563,13 +588,6 @@ define([
                 otherView.viewpoint = newValue;
               });
             });
-            /*if(view.type === "2d") {
-              mouseWheelHandle = view.on("mouse-wheel", () => {
-                others.forEach((otherView) => {
-                  otherView.viewpoint = view.viewpoint;
-                });
-              });
-            }*/
           }, 0);
 
           // stop as soon as another view starts interacting, like if the user starts panning
@@ -581,6 +599,12 @@ define([
 
           // or stop when the view is stationary again
           viewStationaryHandle = watchUtils.whenTrue(view, 'stationary', clear);
+
+          // initial sync //
+          others.forEach((otherView) => {
+            otherView.viewpoint = view.viewpoint;
+          });
+
         });
 
         return {
@@ -592,6 +616,7 @@ define([
           }
         }
       };
+
       const synchronizeViews = (views) => {
         let handles = views.map((view, idx, views) => {
           const others = views.concat();
@@ -610,7 +635,6 @@ define([
           }
         }
       };
-
       synchronizeViews(views);
 
     },
@@ -625,19 +649,14 @@ define([
 
       const lava_area_node = dom.byId("lava-acres");
 
+      let query_handle = null;
       return (date_time_value) => {
-
-        /*const acres_statDef = new StatisticDefinition({
-          statisticType: "sum",
-          onStatisticField: "Acres",
-          outStatisticFieldName: "acres_total"
-        });*/
+        query_handle && (!query_handle.isFulfilled()) && query_handle.cancel();
 
         const acres_query = layerView.layer.createQuery();
         acres_query.outFields = [time_field];
-        //acres_query.outStatistics = [acres_statDef];
         acres_query.where = `${time_field} < timestamp '${(new Date(date_time_value)).toAGSDateTimeString()}'`;
-        layerView.queryFeatures(acres_query).then((lava_featureSet) => {
+        query_handle = layerView.queryFeatures(acres_query).then((lava_featureSet) => {
 
           const lava_polygons = lava_featureSet.features.map(lava_feature => {
             return lava_feature.geometry.clone();
@@ -665,7 +684,9 @@ define([
       const quake_count_node = dom.byId("quake-count");
       const one_hour = (1000 * 60 * 60);
 
+      let query_handle = null;
       return (date_time_value) => {
+        query_handle && (!query_handle.isFulfilled()) && query_handle.cancel();
 
         const from_date = (new Date(date_time_value - (one_hour * 12))).toAGSDateTimeString();
         const to_date = (new Date(date_time_value + (one_hour * 12))).toAGSDateTimeString();
@@ -673,7 +694,7 @@ define([
         const count_query = layerView.layer.createQuery();
         count_query.outFields = [time_field];
         count_query.where = `(${time_field} > timestamp '${from_date}') AND (${time_field} < timestamp '${to_date}')`;
-        layerView.queryFeatureCount(count_query).then((quake_count) => {
+        query_handle = layerView.queryFeatureCount(count_query).then((quake_count) => {
           quake_count_node.innerHTML = isNaN(quake_count) ? "-" : number.format(quake_count, { places: 0 });
         }, console.error);
 
@@ -783,13 +804,13 @@ define([
 
         const one_hour = (1000 * 60 * 60);
 
-        const frame = function () {
+        const frame = () => {
           if(!animating) {
             return;
           }
           value += (one_hour * 3);
           if(value > current_time_info.max.valueOf()) {
-            value = current_time_info.min.valueOf()
+            value = current_time_info.min.valueOf();
           }
           set_time(value);
           setTimeout(() => {
@@ -848,7 +869,7 @@ define([
             "field": "FieldTime",
             "valueExpression": null,
             "stops": [
-              { "value": date_time_value - (one_hour * 24), "color": "#444" },
+              { "value": date_time_value - (one_hour * 24), "color": "#555" },
               { "value": date_time_value, "color": Color.named.red }
             ]
           },
@@ -947,7 +968,6 @@ define([
 
     },
 
-
     /**
      *
      * @param layerView
@@ -963,6 +983,13 @@ define([
         fillOpacity: 0.1
       };
 
+      this.clearHighlights = () => {
+        if(highlightHandle) {
+          highlightHandle.remove();
+          highlightHandle = null;
+        }
+      };
+
       let query_handle = null;
       return (lava_polygon) => {
         query_handle && (!query_handle.isFulfilled()) && query_handle.cancel();
@@ -971,13 +998,9 @@ define([
         count_query.geometry = lava_polygon;
 
         query_handle = layerView.queryObjectIds(count_query).then((ids) => {
-          if(highlightHandle) {
-            highlightHandle.remove();
-            highlightHandle = null;
-          }
-          highlightHandle = layerView.highlight(ids);
-
           dom.byId("parcels-count").innerHTML = number.format(ids.length);
+          this.clearHighlights();
+          highlightHandle = layerView.highlight(ids);
         });
 
       };
